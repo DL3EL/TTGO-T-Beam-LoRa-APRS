@@ -328,8 +328,10 @@ struct LastHeard LH[MAX_LH];
 
 String RX_RAW_PACKET_LIST[3];
 String LastRXMessage = "";
-String LastRXMessageTimeAndSender = "";
-uint8_t LastRXMessageInfo = 0;  // bitmask: 1 personal aprs text message. 2 winlink message. 3 both. => Display maker: 1: "m", 2: "W", 3: "M"
+String LastRXMessageSender = "";
+String LastRXMessageTimeStr= "";
+uint8_t LastRXMessageChanged = 0L;
+uint8_t LastRXMessageInfo = 0;  // bitmask: 1 personal aprs text message. 2 winlink message. 3 both. => Display maker: 1: "m", 2: "w", 3: "M"
 
 //byte Variables
 byte  lora_TXStart;          //start of packet data in TXbuff
@@ -1672,36 +1674,36 @@ void fillDisplayLine1(int caller) {
     int h = ((t / 60 / 60) % 24);
     int m = ((t / 60) % 60);
     if (d)
-      sprintf(s_uptime, "%dd%2.2d:%2.2d", d, h, m);
+      sprintf(s_uptime, "%dd%2.2d", d, h);
     else
       sprintf(s_uptime, "%2.2d:%2.2d", h, m);
     old_time = t;
   }
+  OledLine1 = String(" Up:") + String(s_uptime);
   if (LastRXMessageInfo == 3) {
     // winlink and personal message -> "M"
-      OledLine1 = "M";
+      OledLine1 += " M";
   } else
       if (LastRXMessageInfo == 1) {
         // personal message -> "m"
-        OledLine1 = "m";
+        OledLine1 += " m";
       } else {
           if (winlink_notified != 0L) {
             if (winlink_notified + 60*60*24*1000L > millis()) {
             // show winlink mail info for max 24h
-              OledLine1 = "W";
+              OledLine1 += " w";
             } else {
                 // reset
                 winlink_notified = 0L;
-                OledLine1 = " ";
+//                OledLine1 = "  ";
                 // Remove winlink indicator bit
                 if (LastRXMessageInfo & 2)
                   LastRXMessageInfo &= ~2;
             }
           } else {
-            OledLine1 = " ";
+//            OledLine1 = "  ";
           }  
         }
-  OledLine1 = OledLine1 + String("Up ") + String(s_uptime);
   if (*gps_time_s)
     OledLine1 = String(gps_time_s) + OledLine1;
 }
@@ -5468,14 +5470,18 @@ String handle_aprs_messsage_addressed_to_us(const char *received_frame) {
         *q = 0;
       enableOled_now(); // enable OLED
       freeze_display = true;
-      String RXMessageTimeAndSender;
-      if (*gps_time_s)
-        RXMessageTimeAndSender = String(gps_time_s);
-      else
-        RXMessageTimeAndSender = String("@up ") + compute_time_since_received(millis()/1000);
-      RXMessageTimeAndSender = RXMessageTimeAndSender + String(" ") + String(msg_from) + ":";
+      String RXMessageSender = String(msg_from);
       String RXMessage = String(header_normal_or_third_party_end + 11+1);
-      writedisplaytext(" ((MSG))",RXMessageTimeAndSender,RXMessage,"","","");
+      String RXMessageTimeStr;
+      struct tm timeinfo;
+      if (getLocalTimeTheBetterWay(&timeinfo)) {
+        char buf[12]; // Room for "0322 06:08" + \0
+        strftime(buf, sizeof(buf), "%d.%m %H:%M", &timeinfo);
+        RXMessageTimeStr = String(buf);
+      } else {
+        RXMessageTimeStr = String("");
+      }
+      writedisplaytext(" ((MSG))",RXMessageTimeStr + " " + String(msg_from),RXMessage,"","","");
       if (add_winlink_notification &&
           !strncmp(header_normal_or_third_party_start, "WLNK-1", 6) && header_normal_or_third_party_start[6] == '>' &&
           !strncmp(header_normal_or_third_party_end + 12, "You have ", 9) &&
@@ -5484,15 +5490,19 @@ String handle_aprs_messsage_addressed_to_us(const char *received_frame) {
         LastRXMessageInfo |= 2;
         if (!(LastRXMessageInfo & 1)) {
           // Store message
-          LastRXMessageTimeAndSender = String(RXMessageTimeAndSender);
+          LastRXMessageSender = String(RXMessageSender);
+          LastRXMessageTimeStr = String(RXMessageTimeStr);
           LastRXMessage = String(RXMessage);
+          LastRXMessageChanged = millis();
         }
         winlink_notified = millis();
       } else {
         // Store message
         LastRXMessageInfo |= 1;
-        LastRXMessageTimeAndSender = String(RXMessageTimeAndSender);
+        LastRXMessageSender = String(RXMessageSender);
+        LastRXMessageTimeStr = String(RXMessageTimeStr);
         LastRXMessage = String(RXMessage);
+        LastRXMessageChanged = millis();
       }
 #ifdef ENABLE_WIFI
       // TODO: add message to a new-to-implement web-received-list-for-aps-messages
@@ -5759,7 +5769,15 @@ void loop()
             if (button_down_count == 1) {
               write_last_heard_calls_with_distance_and_course_to_display();
             } else if (button_down_count == 2) {
-              writedisplaytext("((MSG))",LastRXMessageTimeAndSender,LastRXMessage,"","","");
+//              writedisplaytext("((MSG))",LastRXMessageTimeAndSender,LastRXMessage,"","","");
+              String RXMessageTimeAndSender;
+              if (LastRXMessageTimeStr.isEmpty()) {
+                RXMessageTimeAndSender = compute_time_since_received(millis()/1000L - LastRXMessageChanged/1000L) + " ago ";
+              } else {
+                RXMessageTimeAndSender = LastRXMessageTimeStr + " ";
+              }
+              RXMessageTimeAndSender = LastRXMessageTimeStr + " " + LastRXMessageSender;
+              writedisplaytext("((MSG))",RXMessageTimeAndSender,LastRXMessage,"","","");
               // Message has been displayed, we can remove the "new message-indicator"
               if (LastRXMessageInfo & 2) {
                 // last received was a winlink notification and we just read that message
@@ -6068,11 +6086,11 @@ if (t_elapsed > 15000L && ((curr_hdop < 1.5 && curr_sats >= 4) || gps_isValid !=
       delay(1500);
       esp_task_wdt_reset();
     } else {
-      writedisplaytext("LoRa-APRS","","Rebooting:","to stop WiFi","do not press key","");
+      writedisplaytext("LoRa-APRS","","Rebooting:","to stop WiFi","do not press key --- TODO --- WHAT DOES THIS MESSAGE MEAN?","");
 #ifdef ENABLE_WIFI
       do_send_status_message_about_reboot_to_aprsis();
 #endif
-      delay(2000);
+      delay(5000);
       ESP.restart();
     }
 #endif
@@ -6165,10 +6183,10 @@ if (t_elapsed > 15000L && ((curr_hdop < 1.5 && curr_sats >= 4) || gps_isValid !=
         if (shutdown_active && shutdown_countdown_timer_enable) {
           shutdown_countdown_timer_enable = false;
           writedisplaytext("((ABORT))","External Power","plugged in","Shutdown aborted","","");
+          freeze_display = true;
         } else {
           writedisplaytext("((POWER))","External Power","plugged in","","","");
         }
-        freeze_display = true;
         usb_status_before = true;
       }
     } else {
