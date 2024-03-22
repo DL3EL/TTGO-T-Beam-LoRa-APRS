@@ -1677,27 +1677,33 @@ void fillDisplayLine1(int caller) {
       sprintf(s_uptime, "%2.2d:%2.2d", h, m);
     old_time = t;
   }
-  OledLine1 = String("Up ") + String(s_uptime);
-  if (*gps_time_s)
-    OledLine1 = String(gps_time_s) + String(" ") + OledLine1;
   if (LastRXMessageInfo == 3) {
     // winlink and personal message -> "M"
-    OledLine1 += " M";
-  } else if (LastRXMessageInfo == 1) {
-    // personal message -> "m"
-    OledLine1 += " m";
-  } else if (winlink_notified != 0L) {
-    if (winlink_notified + 60*60*24*1000L > millis()) {
-      // show winlink mail info for max 24h
-      OledLine1 += " W";
-    } else {
-      // reset
-      winlink_notified = 0L;
-      // Remove winlink indicator bit
-      if (LastRXMessageInfo & 2)
-        LastRXMessageInfo &= ~2;
-    }
-  }
+      OledLine1 = "M";
+  } else
+      if (LastRXMessageInfo == 1) {
+        // personal message -> "m"
+        OledLine1 = "m";
+      } else {
+          if (winlink_notified != 0L) {
+            if (winlink_notified + 60*60*24*1000L > millis()) {
+            // show winlink mail info for max 24h
+              OledLine1 = "W";
+            } else {
+                // reset
+                winlink_notified = 0L;
+                OledLine1 = " ";
+                // Remove winlink indicator bit
+                if (LastRXMessageInfo & 2)
+                  LastRXMessageInfo &= ~2;
+            }
+          } else {
+            OledLine1 = " ";
+          }  
+        }
+  OledLine1 = OledLine1 + String("Up ") + String(s_uptime);
+  if (*gps_time_s)
+    OledLine1 = String(gps_time_s) + OledLine1;
 }
 
 void fillDisplayLine2() {
@@ -5754,20 +5760,18 @@ void loop()
               write_last_heard_calls_with_distance_and_course_to_display();
             } else if (button_down_count == 2) {
               writedisplaytext("((MSG))",LastRXMessageTimeAndSender,LastRXMessage,"","","");
-            } else if (button_down_count == 2) {
-              writedisplaytext("((BN))","","BuildNr:" + buildnr,"by DL9SAU & DL3EL","","");
+              // Message has been displayed, we can remove the "new message-indicator"
+              if (LastRXMessageInfo & 2) {
+                // last received was a winlink notification and we just read that message
+                winlink_notified = 0L;
+              }
+              LastRXMessageInfo = 0;
             } else if (button_down_count < 6) {
               int n = button_down_count-3;
               writedisplaytext("RX raw-" + String(n+1),"",RX_RAW_PACKET_LIST[n],"","","");
               time_to_refresh = millis() + showRXTime;
             } else if (button_down_count == 6) {
               writedisplaytext("((BN))","BuildNr:" + buildnr,"by DL9SAU & DL3EL","","next press: tx bcn","or wait ...");
-              // If we cycled through to this last page, we can remove the "new message-indicator"
-              if (LastRXMessageInfo & 2) {
-                // last received was a winlink notification and we just read that message
-                winlink_notified = 0L;
-              }
-              LastRXMessageInfo = 0;
             } else if (button_down_count == 7) {
               button_down_count = 0;
               if (lora_tx_enabled || aprsis_enabled) {
@@ -6912,8 +6916,8 @@ behind_position_tx:
             displayInvalidGPS();
         }
       } else {
-        // refresh  time
-        fillDisplayLine1(5);
+        // refresh  time -> check if necessary
+        //fillDisplayLine1(5);
       }
     }
   }
