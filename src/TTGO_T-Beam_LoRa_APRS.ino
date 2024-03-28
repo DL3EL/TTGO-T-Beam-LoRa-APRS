@@ -329,7 +329,7 @@ struct LastHeard LH[MAX_LH];
 String RX_RAW_PACKET_LIST[3];
 String LastRXMessage = "";
 String LastRXMessageSender = "";
-String LastRXMessageTimeStr= "";
+String LastRXMessageTimeStr = "";
 uint8_t LastRXMessageChanged = 0L;
 uint8_t LastRXMessageInfo = 0;  // bitmask: 1 personal aprs text message. 2 winlink message. 3 both. => Display maker: 1: "m", 2: "w", 3: "M"
 
@@ -1651,17 +1651,13 @@ String getSatAndBatInfo() {
 }
 
 void fillDisplayLine1(int caller) {
-  //static String OledLine1s = "";
-  //OledLine1_time = gps_time_s;
-  // OledLine1s = " Up:" + String(millis()/1000/60) + "m";
-
   if (freeze_display)
     return;
   if (debug_verbose > 2)
     Serial.printf("fillDisplayLine1 caller:%d button_down:%d\r\n",caller, freeze_display);
   static uint32_t old_time = 0L;
   uint32_t t = millis() / 1000;
-  char s_uptime[9];  // room for 49d17:02 + \0 -> 9 bytes
+  char s_uptime[6];  // room for 49d17 + \0 -> 6 bytes
 
   // > 49d 17h 2min? millis-overflow -> mark it
   if (t < old_time)
@@ -1674,38 +1670,32 @@ void fillDisplayLine1(int caller) {
     int h = ((t / 60 / 60) % 24);
     int m = ((t / 60) % 60);
     if (d)
-      sprintf(s_uptime, "%dd%2.2d", d, h);
+      sprintf(s_uptime, "%2dd%2.2d", d % 100, h);
     else
       sprintf(s_uptime, "%2.2d:%2.2d", h, m);
     old_time = t;
   }
-  OledLine1 = String(" Up:") + String(s_uptime);
+  OledLine1 = String("Up:") + String(s_uptime);
   if (LastRXMessageInfo == 3) {
     // winlink and personal message -> "M"
-      OledLine1 += " M";
-  } else
-      if (LastRXMessageInfo == 1) {
-        // personal message -> "m"
-        OledLine1 += " m";
-      } else {
-          if (winlink_notified != 0L) {
-            if (winlink_notified + 60*60*24*1000L > millis()) {
-            // show winlink mail info for max 24h
-              OledLine1 += " w";
-            } else {
-                // reset
-                winlink_notified = 0L;
-//                OledLine1 = "  ";
-                // Remove winlink indicator bit
-                if (LastRXMessageInfo & 2)
-                  LastRXMessageInfo &= ~2;
-            }
-          } else {
-//            OledLine1 = "  ";
-          }  
-        }
+    OledLine1 += " M";
+  } else if (LastRXMessageInfo == 1) {
+    // personal message -> "m"
+    OledLine1 += " m";
+  } else if (winlink_notified != 0L) {
+    if (winlink_notified + 60*60*24*1000L > millis()) {
+      // show winlink mail info for max 24h
+      OledLine1 += " w";
+    } else {
+      // reset
+      winlink_notified = 0L;
+      // Remove winlink indicator bit
+      if (LastRXMessageInfo & 2)
+        LastRXMessageInfo &= ~2;
+    }
+  }
   if (*gps_time_s)
-    OledLine1 = String(gps_time_s) + OledLine1;
+    OledLine1 = String(gps_time_s) + String(" ") + OledLine1;
 }
 
 void fillDisplayLine2() {
@@ -5035,9 +5025,9 @@ void handle_usb_serial_input(void) {
           if (cmd == "debug") {
             if (arg != "") {
               debug_verbose = arg.toInt();
-              Serial.printf("Debug Level now:%d (Arg: %s)\r\n", debug_verbose, arg.c_str());
+              Serial.printf("Debug Level now: %d (Arg: %s)\r\n", debug_verbose, arg.c_str());
             } else {
-              Serial.printf("Debug Level:%d\r\n", debug_verbose);
+              Serial.printf("Debug Level: %d\r\n", debug_verbose);
             }
             Serial.print("cmd:");
             inputBuf = "";
@@ -5305,7 +5295,7 @@ void handle_usb_serial_input(void) {
           } else if (cmd == "wifi") {
             if (arg != "") {
               #ifdef ENABLE_PREFERENCES
-                preferences.putInt(PREF_WIFI_ENABLE, (arg_bool) ? 0 : 1);
+                preferences.putInt(PREF_WIFI_ENABLE, arg_bool ? 1 : 0);
                 #if defined(ENABLE_SYSLOG)
                   if (debug_verbose)
                     syslog_log(LOG_DEBUG, String("FlashWrite preferences: handle_usb_serial_input() 5"));
@@ -5330,6 +5320,8 @@ void handle_usb_serial_input(void) {
                   delay(1500);
                   esp_task_wdt_reset();
                 }
+              } else {
+                enable_webserver = 0;
               }
             }
             Serial.println("*** " + cmd + " is " + (enable_webserver ? "on" : "off"));
@@ -5471,17 +5463,18 @@ String handle_aprs_messsage_addressed_to_us(const char *received_frame) {
       enableOled_now(); // enable OLED
       freeze_display = true;
       String RXMessageSender = String(msg_from);
+      String RXMessageTimeAndSender = RXMessageSender + ":";
       String RXMessage = String(header_normal_or_third_party_end + 11+1);
-      String RXMessageTimeStr;
+      String RXMessageTimeStr = "";
       struct tm timeinfo;
       if (getLocalTimeTheBetterWay(&timeinfo)) {
-        char buf[12]; // Room for "0322 06:08" + \0
-        strftime(buf, sizeof(buf), "%d.%m %H:%M", &timeinfo);
+        char buf[12]; // Room for "03-22 06:08" + \0
+        strftime(buf, sizeof(buf), "%m-%d %H:%M", &timeinfo);
         RXMessageTimeStr = String(buf);
-      } else {
-        RXMessageTimeStr = String("");
+        // Add time to front
+        RXMessageTimeAndSender = RXMessageTimeStr + " " + RXMessageTimeAndSender;
       }
-      writedisplaytext(" ((MSG))",RXMessageTimeStr + " " + String(msg_from),RXMessage,"","","");
+      writedisplaytext(" ((MSG))",RXMessageTimeAndSender,RXMessage,"","","");
       if (add_winlink_notification &&
           !strncmp(header_normal_or_third_party_start, "WLNK-1", 6) && header_normal_or_third_party_start[6] == '>' &&
           !strncmp(header_normal_or_third_party_end + 12, "You have ", 9) &&
@@ -5769,14 +5762,16 @@ void loop()
             if (button_down_count == 1) {
               write_last_heard_calls_with_distance_and_course_to_display();
             } else if (button_down_count == 2) {
-//              writedisplaytext("((MSG))",LastRXMessageTimeAndSender,LastRXMessage,"","","");
-              String RXMessageTimeAndSender;
-              if (LastRXMessageTimeStr.isEmpty()) {
-                RXMessageTimeAndSender = compute_time_since_received(millis()/1000L - LastRXMessageChanged/1000L) + " ago ";
-              } else {
-                RXMessageTimeAndSender = LastRXMessageTimeStr + " ";
+              String RXMessageTimeAndSender = "";
+              if (!LastRXMessageSender.isEmpty()) {
+                String RXMessageTimeStr;
+                if (LastRXMessageTimeStr.isEmpty()) {
+                  RXMessageTimeStr = compute_time_since_received(millis()/1000L - LastRXMessageChanged/1000L) + " ago";
+                } else {
+                  RXMessageTimeStr = LastRXMessageTimeStr;
+                }
+                RXMessageTimeAndSender = RXMessageTimeStr + " " + LastRXMessageSender + ":";
               }
-              RXMessageTimeAndSender = LastRXMessageTimeStr + " " + LastRXMessageSender;
               writedisplaytext("((MSG))",RXMessageTimeAndSender,LastRXMessage,"","","");
               // Message has been displayed, we can remove the "new message-indicator"
               if (LastRXMessageInfo & 2) {
@@ -6081,16 +6076,16 @@ if (t_elapsed > 15000L && ((curr_hdop < 1.5 && curr_sats >= 4) || gps_isValid !=
       webServerCfg = {.callsign = Tcall};
       xTaskCreate(taskWebServer, "taskWebServer", 12000, (void*)(&webServerCfg), 1, nullptr);
       webserverStarted = true;
-      writedisplaytext("LoRa-APRS","","Button:","WiFi task started","long press to ","stop again");
+      writedisplaytext("LoRa-APRS","","Button:","WiFi task started","long press to ","stop again (->reboot)");
       esp_task_wdt_reset();
-      delay(1500);
+      delay(3000);
       esp_task_wdt_reset();
     } else {
-      writedisplaytext("LoRa-APRS","","Rebooting:","to stop WiFi","do not press key --- TODO --- WHAT DOES THIS MESSAGE MEAN?","");
+      writedisplaytext("LoRa-APRS","","Button:","Rebooting,","for stoping WiFi.","Release Button now!");
 #ifdef ENABLE_WIFI
       do_send_status_message_about_reboot_to_aprsis();
 #endif
-      delay(5000);
+      delay(3000);
       ESP.restart();
     }
 #endif
